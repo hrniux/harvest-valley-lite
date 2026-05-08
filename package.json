@@ -1,0 +1,28 @@
+{
+  "name": "harvest-valley-lite",
+  "version": "1.0.0",
+  "description": "A compact Stardew Valley-inspired browser farming game built with vanilla Canvas.",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node scripts/test-browser.mjs",
+    "check": "npm test && npm run build && npm run test:browser"
+  },
+  "keywords": [
+    "browser-game",
+    "farming-game",
+    "canvas",
+    "pixel-art",
+    "vite"
+  ],
+  "author": "hrniux",
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.56.1",
+    "vite": "^7.2.7"
+  }
+}
