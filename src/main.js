@@ -63,6 +63,12 @@ function runAction(action) {
 }
 
 function handleKeyDown(event) {
+  const target = event.target;
+  if (target instanceof Element && target !== canvas
+    && (target.closest("button, a[href], input, select, textarea") || target.isContentEditable)) {
+    return;
+  }
+
   const key = event.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d"].includes(key)) {
     event.preventDefault();
@@ -87,6 +93,11 @@ function handleKeyDown(event) {
 
 function handleKeyUp(event) {
   keys.delete(event.key.toLowerCase());
+}
+
+function resetInput() {
+  keys.clear();
+  moveCooldown = 0;
 }
 
 function handlePointer(event) {
@@ -296,6 +307,7 @@ function gameLoop(previousTime = performance.now()) {
 
 canvas.addEventListener("keydown", handleKeyDown);
 canvas.addEventListener("keyup", handleKeyUp);
+canvas.addEventListener("blur", resetInput);
 canvas.addEventListener("pointerdown", handlePointer);
 shell.querySelectorAll("button[data-action]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -308,6 +320,10 @@ window.addEventListener("keydown", (event) => {
   if (document.activeElement !== canvas) handleKeyDown(event);
 });
 window.addEventListener("keyup", handleKeyUp);
+window.addEventListener("blur", resetInput);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) resetInput();
+});
 window.addEventListener("resize", render);
 
 window.render_game_to_text = () => JSON.stringify(summarizeState(state));

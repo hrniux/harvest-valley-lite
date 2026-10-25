@@ -60,6 +60,97 @@ function startServer() {
   });
 }
 
+async function verifyKeyboardControls(browser, url) {
+  const checks = [];
+  const cases = [
+    ["Space activates the focused Sell button once", async (page) => {
+      await page.evaluate(() => { window.__harvestValleyState.inventory.turnips = 2; });
+      await page.locator('button[data-action="sell"]').focus();
+      await page.keyboard.press("Space");
+      const state = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+      assert.equal(state.gold, 35);
+      assert.equal(state.turnips, 1);
+      assert.equal(state.plots[4].tilled, false);
+    }],
+    ["Enter activates the focused Sell button once", async (page) => {
+      await page.evaluate(() => { window.__harvestValleyState.inventory.turnips = 2; });
+      await page.locator('button[data-action="sell"]').focus();
+      await page.keyboard.press("Enter");
+      const state = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+      assert.equal(state.gold, 35);
+      assert.equal(state.turnips, 1);
+      assert.equal(state.plots[4].tilled, false);
+    }],
+    ["Space activates the focused Sleep button", async (page) => {
+      await page.locator('button[data-action="sleep"]').focus();
+      await page.keyboard.press("Space");
+      const state = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+      assert.equal(state.day, 2);
+      assert.equal(state.plots[4].tilled, false);
+    }],
+    ["Space retains the canvas context action", async (page) => {
+      await page.locator("canvas").focus();
+      await page.keyboard.press("Space");
+      await page.keyboard.press("Space");
+      await page.keyboard.press("Space");
+      const state = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+      assert.equal(state.plots[4].tilled, true);
+      assert.equal(state.plots[4].cropStage, 0);
+      assert.equal(state.plots[4].watered, true);
+      assert.equal(state.stamina, 9);
+    }],
+    ...["window blur", "hidden document", "canvas blur"].map((transition) => [
+      `Movement stops after ${transition}`,
+      async (page) => {
+        await page.locator("canvas").focus();
+        await page.keyboard.down("ArrowRight");
+        const selected = await page.evaluate((transition) => {
+          if (transition === "window blur") {
+            window.dispatchEvent(new Event("blur"));
+          } else if (transition === "hidden document") {
+            Object.defineProperty(document, "hidden", { configurable: true, value: true });
+            document.dispatchEvent(new Event("visibilitychange"));
+          } else {
+            document.querySelector('button[data-action="sell"]').focus();
+          }
+          window.__harvestValleyState.selectedIndex = 4;
+          window.advanceTime(500);
+          return window.__harvestValleyState.selectedIndex;
+        }, transition);
+        await page.keyboard.up("ArrowRight");
+        assert.equal(selected, 4, "Lost focus must not leave a movement key held");
+
+        // A fresh key press must still work after returning to the canvas.
+        await page.evaluate(() => { delete document.hidden; });
+        await page.locator("canvas").focus();
+        await page.keyboard.down("ArrowLeft");
+        const moved = await page.evaluate(() => {
+          window.advanceTime(200);
+          return window.__harvestValleyState.selectedIndex;
+        });
+        await page.keyboard.up("ArrowLeft");
+        assert.equal(moved, 3);
+      },
+    ]),
+  ];
+
+  for (const [name, run] of cases) {
+    const page = await browser.newPage();
+    try {
+      await page.goto(url, { waitUntil: "networkidle" });
+      await run(page);
+      checks.push({ name, ok: true });
+    } catch (error) {
+      checks.push({ name, ok: false, error: String(error) });
+    } finally {
+      await page.close();
+    }
+  }
+  console.log(JSON.stringify({ keyboardChecks: checks }, null, 2));
+  assert.ok(checks.every((check) => check.ok), "Keyboard regression checks must pass");
+  return checks;
+}
+
 async function main() {
   assert.equal(await fileExists(chromePath), true, `Chrome executable not found: ${chromePath}`);
   assert.equal(await fileExists(distDir), true, "Run npm run build before browser verification.");
@@ -121,10 +212,12 @@ async function main() {
     assert.ok(mobileLayout.canvasWidth <= mobileLayout.innerWidth, "Canvas should fit mobile viewport.");
     await mobilePage.close();
 
+    const keyboardChecks = await verifyKeyboardControls(browser, url);
     console.log(JSON.stringify({
       ok: true,
       url,
       summary,
+      keyboardChecks,
       screenshots: ["output/browser/gameplay.png", "output/browser/mobile.png"],
     }, null, 2));
   } finally {
