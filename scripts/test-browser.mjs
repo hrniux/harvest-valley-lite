@@ -282,6 +282,50 @@ async function verifySavedProgress(browser, url) {
       await page.locator('button[data-action="till"]').click();
       assert.equal(JSON.parse(await stored()).state.plots[4].tilled, true, "Successful confirmed replacement unlocks autosave");
     }],
+    ["Another tab's newer farm survives stale actions and failed replacement", async (page) => {
+      await page.locator('button[data-action="sleep"]').click();
+      const other = await page.context().newPage();
+      const errors = [];
+      other.on("pageerror", (error) => errors.push(String(error)));
+      try {
+        await other.goto(url, { waitUntil: "networkidle" });
+        assert.equal((await summary(other)).day, 2);
+        await page.locator('button[data-action="sleep"]').click();
+        const savedBytes = () => page.evaluate((key) => localStorage.getItem(key), saveKey);
+        const newer = await savedBytes();
+        await other.locator('button[data-action="till"]').click();
+        assert.equal((await summary(other)).plots[4].tilled, true, "The stale farm remains playable");
+        assert.equal(await savedBytes(), newer, "Stale gameplay must retain the newer day-3 farm");
+        await other.getByRole("status").filter({ hasText: /another tab/i }).waitFor();
+        await other.reload({ waitUntil: "networkidle" });
+        assert.equal((await summary(other)).day, 3);
+        await page.locator('button[data-action="sleep"]').click();
+        const newest = await savedBytes();
+        await other.locator('button[data-action="till"]').click();
+        const reset = other.getByRole("button", { name: "New farm" });
+        other.once("dialog", (dialog) => dialog.dismiss());
+        await reset.click();
+        assert.equal(await savedBytes(), newest);
+        await other.evaluate(() => {
+          window.healthyConflictWrite = Storage.prototype.setItem;
+          Storage.prototype.setItem = () => { throw new Error("Quota exceeded"); };
+        });
+        other.once("dialog", (dialog) => dialog.accept());
+        await reset.click();
+        await other.getByRole("status").filter({ hasText: /another tab/i }).waitFor();
+        await other.evaluate(() => { Storage.prototype.setItem = window.healthyConflictWrite; });
+        await other.locator('button[data-action="till"]').click();
+        assert.equal(await savedBytes(), newest, "Failed replacement must preserve conflict protection");
+        other.once("dialog", (dialog) => dialog.accept());
+        await reset.click();
+        assert.equal(JSON.parse(await savedBytes()).state.day, 1);
+        await other.locator('button[data-action="till"]').click();
+        assert.equal(JSON.parse(await savedBytes()).state.plots[4].tilled, true);
+        assert.deepEqual(errors, []);
+      } finally {
+        await other.close();
+      }
+    }],
     ["Storage write errors retain progress in memory and retry later", async (page) => {
       await page.evaluate(() => {
         window.healthySaveWrite = Storage.prototype.setItem;
@@ -322,7 +366,8 @@ async function verifySavedProgress(browser, url) {
   ];
   const checks = [];
   for (const [name, run] of cases) {
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     page.setDefaultTimeout(4000);
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -334,7 +379,7 @@ async function verifySavedProgress(browser, url) {
     } catch (error) {
       checks.push({ name, ok: false, error: String(error) });
     } finally {
-      await page.close();
+      await context.close();
     }
   }
   console.log(JSON.stringify({ saveChecks: checks }, null, 2));

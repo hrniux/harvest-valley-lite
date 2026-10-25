@@ -155,6 +155,7 @@ function memoryStorage(initial = null) {
   return {
     getItem(key) { assert.equal(key, "harvest-valley-lite-save"); return value; },
     setItem(key, next) { assert.equal(key, "harvest-valley-lite-save"); value = next; },
+    removeItem(key) { assert.equal(key, "harvest-valley-lite-save"); value = null; },
     read: () => value,
   };
 }
@@ -262,4 +263,130 @@ test("write failures retain the previous save and allow retries after storage re
   assert.equal(store.save(farm), true);
   assert.equal(store.status.kind, "saved");
   assert.equal(createSaveStore(() => storage).load().plots[4].tilled, true);
+});
+
+test("a stale tab cannot overwrite a newer farm saved by another tab", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(createGameState({ seed: 42 })));
+  const first = createSaveStore(() => storage);
+  const second = createSaveStore(() => storage);
+  const active = first.load();
+  const stale = second.load();
+  performAction(active, ACTIONS.SLEEP);
+  assert.equal(first.save(active), true);
+  const newer = storage.read();
+  performAction(stale, ACTIONS.TILL);
+  assert.equal(second.save(stale), false, "A stale tab must not replace day 2 with day 1");
+  assert.equal(storage.read(), newer);
+  assert.equal(second.status.kind, "conflict");
+  assert.match(second.status.message, /another tab/i);
+  assert.match(second.status.message, /changes are not saved/i);
+  assert.equal(createSaveStore(() => storage).load().day, 2, "Reload restores the newer farm");
+});
+
+test("tabs opened before the first save cannot replace each other's new progress", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage();
+  const first = createSaveStore(() => storage);
+  const second = createSaveStore(() => storage);
+  first.load();
+  second.load();
+  const active = createGameState({ seed: 42 });
+  performAction(active, ACTIONS.SLEEP);
+  assert.equal(first.save(active), true);
+  const newer = storage.read();
+  assert.equal(second.save(createGameState({ seed: 42 })), false);
+  assert.equal(storage.read(), newer);
+  assert.equal(second.status.kind, "conflict");
+});
+
+test("a removed save is not silently recreated by an already open tab", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(progressedFarm()));
+  const store = createSaveStore(() => storage);
+  const stale = store.load();
+  storage.removeItem("harvest-valley-lite-save");
+  performAction(stale, ACTIONS.SLEEP);
+  assert.equal(store.save(stale), false);
+  assert.equal(storage.read(), null);
+  assert.equal(store.status.kind, "conflict");
+});
+
+test("external malformed save changes remain untouched until explicit replacement", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(progressedFarm()));
+  const store = createSaveStore(() => storage);
+  const farm = store.load();
+  const previous = storage.read();
+  storage.setItem("harvest-valley-lite-save", "{externally changed");
+  assert.equal(store.save(farm), false);
+  assert.equal(storage.read(), "{externally changed");
+  assert.equal(store.status.kind, "conflict");
+  storage.setItem("harvest-valley-lite-save", previous);
+  assert.equal(store.save(farm), false, "Returning to old bytes must not silently unlock a conflicted tab");
+  assert.equal(storage.read(), previous);
+});
+
+test("failed conflict reads protect saved bytes even when writes still work", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(progressedFarm()));
+  const store = createSaveStore(() => storage);
+  const farm = store.load();
+  const previous = storage.read();
+  const healthyRead = storage.getItem;
+  storage.getItem = () => { throw new Error("Read denied after loading"); };
+  performAction(farm, ACTIONS.SLEEP);
+  assert.equal(store.save(farm), false);
+  assert.equal(storage.read(), previous);
+  assert.equal(store.status.kind, "protected");
+  storage.getItem = healthyRead;
+  assert.equal(store.save(farm), false, "Read recovery must not silently unlock the unsaved session");
+  assert.equal(storage.read(), previous);
+});
+
+test("only a successful confirmed replacement resumes saving after a conflict", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(createGameState({ seed: 42 })));
+  const store = createSaveStore(() => storage);
+  const stale = store.load();
+  storage.setItem("harvest-valley-lite-save", game.serializeGameState(progressedFarm()));
+  const newer = storage.read();
+  assert.equal(store.save(stale), false);
+  const healthyWrite = storage.setItem;
+  storage.setItem = () => { throw new Error("Quota exceeded"); };
+  const replacement = createGameState({ seed: 7 });
+  assert.equal(store.replace(replacement), false);
+  assert.equal(store.status.kind, "conflict");
+  storage.setItem = healthyWrite;
+  assert.equal(store.save(replacement), false, "Failed replacement must keep autosave blocked");
+  assert.equal(storage.read(), newer);
+  assert.equal(store.replace(replacement), true);
+  performAction(replacement, ACTIONS.TILL);
+  assert.equal(store.save(replacement), true);
+  const restored = createSaveStore(() => storage).load();
+  assert.equal(restored.seed, 7);
+  assert.equal(restored.plots[4].tilled, true);
+});
+
+test("confirmed replacement permits unreadable storage only until comparison reads recover", async () => {
+  const { createSaveStore } = await saveModule();
+  const storage = memoryStorage(game.serializeGameState(progressedFarm()));
+  const healthyRead = storage.getItem;
+  const deniedRead = () => { throw new Error("Read denied while writes work"); };
+  storage.getItem = deniedRead;
+  const store = createSaveStore(() => storage);
+  store.load();
+  const fresh = createGameState({ seed: 7 });
+  assert.equal(store.replace(fresh), true);
+  performAction(fresh, ACTIONS.TILL);
+  assert.equal(store.save(fresh), true, "Successful explicit replacement permits continued writes");
+  storage.getItem = healthyRead;
+  performAction(fresh, ACTIONS.PLANT);
+  assert.equal(store.save(fresh), true);
+  const previous = storage.read();
+  storage.getItem = deniedRead;
+  performAction(fresh, ACTIONS.WATER);
+  assert.equal(store.save(fresh), false, "After a readable comparison, new read failures protect saved progress again");
+  assert.equal(storage.read(), previous);
+  assert.equal(store.status.kind, "protected");
 });

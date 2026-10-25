@@ -34,6 +34,8 @@ Saves stay on this browser and device; clearing site data removes them. If brows
 
 If the browser cannot access existing saved progress, autosave pauses for that session to protect it. Reload to retry restoring the saved farm, or confirm **New farm** to replace it. Autosave resumes only after that replacement is successfully saved; a failed replacement keeps the prior save protected.
 
+Before autosaving, the game checks whether another tab changed or removed the save since this tab last loaded or saved it. If so, this tab stays playable but stops saving and explains the conflict. Reload to restore the current saved farm, or confirm **New farm** to replace it; canceling or a failed replacement keeps autosave paused. If reads remain blocked after a successful confirmed replacement, autosave can continue writing the replacement farm; conflict checking resumes when reads recover. This is an optimistic check, not an atomic lock: simultaneous writes from multiple tabs can still race, so use one tab for play at a time.
+
 Use **New farm** to restart. A confirmation lets you cancel before the current save is replaced.
 
 ## Verification
