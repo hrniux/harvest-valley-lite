@@ -43,3 +43,5 @@ npm run check
 ```
 
 This runs game-logic tests, creates a production build, and verifies the browser game with Playwright.
+
+Pull requests run the same complete check in CI on Node.js 22 using the runner's preinstalled Google Chrome. Dependency installation does not download a browser. The browser path is explicit so an unavailable runner browser fails clearly.

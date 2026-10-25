@@ -1,0 +1,30 @@
+name: Verify farm
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      CHROME_EXECUTABLE: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify preinstalled browser
+        run: |
+          test -x "$CHROME_EXECUTABLE"
+          "$CHROME_EXECUTABLE" --version
+      - run: npm ci
+      - name: Verify logic, production build and real browser workflows
+        run: npm run check
