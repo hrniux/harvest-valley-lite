@@ -10,6 +10,7 @@ import {
   selectSlot,
   summarizeState,
 } from "./game-state.js";
+import { createSaveStore } from "./save-game.js";
 
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 640;
@@ -36,6 +37,10 @@ shell.innerHTML = `
     <button data-action="${ACTIONS.UPGRADE}">8 Bag</button>
     <button data-action="${ACTIONS.SLEEP}">N Sleep</button>
   </nav>
+  <section class="save-controls" aria-label="Saved progress">
+    <p id="save-status" role="status" aria-live="polite"></p>
+    <button id="new-farm" type="button">New farm</button>
+  </section>
 `;
 app.append(shell);
 
@@ -43,7 +48,10 @@ const canvas = shell.querySelector("#game");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-const state = createGameState({ seed: 42 });
+const saveStore = createSaveStore(() => window.localStorage);
+const state = saveStore.load() || createGameState({ seed: 42 });
+const saveStatus = shell.querySelector("#save-status");
+saveStatus.textContent = saveStore.status.message;
 const keys = new Set();
 let moveCooldown = 0;
 let pulse = 0;
@@ -54,11 +62,21 @@ const farmRects = Array.from({ length: 9 }, (_, index) => {
   return { x, y, w: TILE, h: TILE };
 });
 
+function saveProgress({ replace = false } = {}) {
+  if (replace) saveStore.replace(state);
+  else saveStore.save(state);
+  // Keep the live region quiet when the status has not changed.
+  if (saveStatus.textContent !== saveStore.status.message) {
+    saveStatus.textContent = saveStore.status.message;
+  }
+}
+
 function runAction(action) {
   performAction(state, action);
   if (state.minute >= 23 * 60) {
     performAction(state, ACTIONS.SLEEP);
   }
+  saveProgress();
   render();
 }
 
@@ -110,7 +128,9 @@ function handlePointer(event) {
     x >= plot.x && x <= plot.x + plot.w && y >= plot.y && y <= plot.y + plot.h
   ));
   if (index >= 0) {
+    const previous = state.selectedIndex;
     selectSlot(state, index);
+    if (state.selectedIndex !== previous) saveProgress();
     render();
     canvas.focus();
   }
@@ -135,7 +155,9 @@ function update(dt) {
     if (keys.has("arrowup") || keys.has("w")) dy -= 1;
     if (keys.has("arrowdown") || keys.has("s")) dy += 1;
     if (dx || dy) {
+      const previous = state.selectedIndex;
       moveSelection(state, Math.sign(dx), Math.sign(dy));
+      if (state.selectedIndex !== previous) saveProgress();
       moveCooldown = 0.14;
     }
   }
@@ -314,6 +336,14 @@ shell.querySelectorAll("button[data-action]").forEach((button) => {
     runAction(button.dataset.action);
     canvas.focus();
   });
+});
+shell.querySelector("#new-farm").addEventListener("click", () => {
+  if (!window.confirm("Start a new farm? This replaces your saved progress in this browser.")) return;
+  resetInput();
+  Object.assign(state, createGameState({ seed: 42 }));
+  saveProgress({ replace: true });
+  render();
+  canvas.focus();
 });
 
 window.addEventListener("keydown", (event) => {

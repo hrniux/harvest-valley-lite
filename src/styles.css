@@ -25,7 +25,7 @@ button {
 .game-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr auto auto;
   gap: 12px;
   padding: clamp(12px, 2vw, 22px);
 }
@@ -37,7 +37,7 @@ button {
 }
 
 canvas {
-  width: min(100%, calc((100vh - 108px) * 1.5));
+  width: min(100%, calc((100vh - 170px) * 1.5));
   max-width: 1120px;
   aspect-ratio: 3 / 2;
   height: auto;
@@ -77,6 +77,36 @@ canvas:focus {
 
 .toolbar button:active {
   transform: translateY(1px);
+}
+
+.save-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #fff1c0;
+}
+
+.save-controls p {
+  margin: 0;
+  max-width: 65ch;
+  font-size: 14px;
+}
+
+.save-controls button {
+  min-height: 38px;
+  padding: 6px 14px;
+  border: 2px solid #30452f;
+  border-radius: 6px;
+  background: #f4dc99;
+  color: #312417;
+  cursor: pointer;
+}
+
+.save-controls button:focus-visible {
+  outline: 3px solid #fff1c0;
+  outline-offset: 2px;
 }
 
 @media (max-width: 680px) {
