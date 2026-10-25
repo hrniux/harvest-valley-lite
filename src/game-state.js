@@ -19,15 +19,12 @@ const SEED_PRICE = 12;
 const UPGRADE_PRICE = 75;
 const ACTION_MINUTES = 20;
 
-function mulberry32(seed) {
-  let value = seed >>> 0;
-  return () => {
-    value += 0x6d2b79f5;
-    let next = value;
-    next = Math.imul(next ^ (next >>> 15), next | 1);
-    next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
-    return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
-  };
+function nextRandom() {
+  this.randomState = (this.randomState + 0x6d2b79f5) >>> 0;
+  let next = this.randomState;
+  next = Math.imul(next ^ (next >>> 15), next | 1);
+  next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
+  return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
 }
 
 function makePlots() {
@@ -40,10 +37,10 @@ function makePlots() {
 
 export function createGameState(options = {}) {
   const seed = Number.isInteger(options.seed) ? options.seed : Date.now();
-  const random = mulberry32(seed);
   return {
     seed,
-    random,
+    randomState: seed >>> 0,
+    random: nextRandom,
     day: 1,
     minute: 8 * 60,
     weather: "sunny",
@@ -63,6 +60,82 @@ export function createGameState(options = {}) {
     message: "Morning light over the valley. Start by tilling soil.",
     actionCount: 0,
   };
+}
+
+// Save data is whitelisted and copied so parsed objects never become live state.
+function snapshotState(state) {
+  return {
+    seed: state.seed,
+    randomState: state.randomState,
+    day: state.day,
+    minute: state.minute,
+    weather: state.weather,
+    stamina: state.stamina,
+    gold: state.gold,
+    seeds: state.seeds,
+    bagSize: state.bagSize,
+    inventory: { turnips: state.inventory.turnips },
+    reputation: state.reputation,
+    selectedIndex: state.selectedIndex,
+    plots: state.plots.map((plot) => ({
+      tilled: plot.tilled,
+      watered: plot.watered,
+      crop: plot.crop ? { stage: plot.crop.stage } : null,
+    })),
+    board: { need: state.board.need, reward: state.board.reward, completed: state.board.completed },
+    message: state.message,
+    actionCount: state.actionCount,
+  };
+}
+
+export function serializeGameState(state) {
+  return JSON.stringify({ version: 1, state: snapshotState(state) });
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function integer(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
+  return Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
+function validSavedState(state) {
+  if (!isRecord(state) || !Number.isSafeInteger(state.seed)
+    || !integer(state.randomState, 0, 0xffffffff)
+    || !integer(state.day, 1) || !integer(state.minute, 480, 1379) || state.minute % 5 !== 0
+    || !["sunny", "rain"].includes(state.weather)
+    || !integer(state.reputation) || !integer(state.stamina, 0, STARTING_STAMINA + Math.min(3, state.reputation))
+    || !integer(state.gold) || !integer(state.seeds) || !integer(state.bagSize, 3) || state.bagSize % 2 !== 1
+    || !isRecord(state.inventory) || !integer(state.inventory.turnips, 0, state.bagSize)
+    || !integer(state.selectedIndex, 0, GRID_SIZE - 1) || !integer(state.actionCount)
+    || typeof state.message !== "string" || state.message.length > 1000
+    || !isRecord(state.board) || !integer(state.board.need, 2, 5)
+    || !integer(state.board.reward, 60) || typeof state.board.completed !== "boolean"
+    || !Array.isArray(state.plots) || state.plots.length !== GRID_SIZE) return false;
+
+  // Completing a request adds one reputation; its terms stay fixed until renewal.
+  const requestReputation = state.reputation - Number(state.board.completed);
+  if (requestReputation < 0 || state.board.need !== 2 + Math.min(3, requestReputation)
+    || state.board.reward !== 60 + requestReputation * 15) return false;
+
+  return state.plots.every((plot) => isRecord(plot)
+    && typeof plot.tilled === "boolean" && typeof plot.watered === "boolean"
+    && (plot.crop === null || (isRecord(plot.crop) && integer(plot.crop.stage, 0, MAX_STAGE)))
+    && (plot.tilled || (!plot.crop && !plot.watered))
+    // Both rainy mornings and rainy planting water every growing crop.
+    && (state.weather !== "rain" || !plot.crop || plot.watered));
+}
+
+export function restoreGameState(serialized) {
+  if (typeof serialized !== "string") return null;
+  try {
+    const payload = JSON.parse(serialized);
+    if (!isRecord(payload) || payload.version !== 1 || !validSavedState(payload.state)) return null;
+    return { ...snapshotState(payload.state), random: nextRandom };
+  } catch {
+    return null;
+  }
 }
 
 export function selectSlot(state, index) {
